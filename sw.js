@@ -1,4 +1,4 @@
-const CACHE = 'focus-v1'
+const CACHE = 'focus-v2'
 const FILES = ['/', '/index.html', '/css/style.css', '/js/app.js', '/js/config.js', '/manifest.json']
 
 self.addEventListener('install', e => {
