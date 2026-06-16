@@ -251,6 +251,7 @@ const Bubbles = {
     const text = await this._fetchAI()
     if (text) {
       this._chats.push({
+        role: 'ai',
         text,
         time: new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})
       })
@@ -261,27 +262,27 @@ const Bubbles = {
   async _fetchAI() {
     const msg = this._buildPrompt()
     const result = await API.chat([
-      { role: 'system', content: '用简短自然的话（20字以内）鼓励正在专注的用户。每次说的内容不要重复。不要说标点。' },
+      { role: 'system', content: '你是骆云影 傲娇暴躁嘴硬心软 用最简洁带刺的话催用户专注 表面嫌弃刻薄实际在盯着有没有偷懒 20字以内 每次不重复 不要标点' },
       { role: 'user', content: msg }
     ])
     if (result) return result
 
-    // Fallback messages
+    // Fallback messages - 骆云影版
     const messages = [
-      '慢慢来 比较快',
-      '你已经在路上了',
-      '专注本身就是收获',
-      '每一步都算数',
-      '今天的你也很棒',
-      '认真的人闪闪发光',
-      '坚持一下 快要到了',
-      '你已经做得很好了',
-      '享受这个过程吧',
-      '专注的你很漂亮',
-      '加油 我在陪着你',
-      '不急 慢慢来',
-      '你比想象中更强大',
-      '又是一次进步呢'
+      '别磨蹭 赶紧的',
+      '还行 没白等',
+      '啧 总算有点样子',
+      '认真起来倒是能看',
+      '今天还行 没偷懒',
+      '还剩一点 别断在这',
+      '做得还行 别得意',
+      '专心做事 少想有的没的',
+      '我看着呢 别想偷懒',
+      '急也没用 慢慢来',
+      '还行嘛 没我想的那么弱',
+      '有进步 别骄傲',
+      '啧 这么拼给谁看',
+      '没偷懒 算你懂事'
     ]
     const used = this._chats.slice(-3).map(c => c.text)
     const avail = messages.filter(m => !used.includes(m))
@@ -292,7 +293,7 @@ const Bubbles = {
     const elapsed = Timer.state.elapsed
     const minutes = Math.floor(elapsed / 60)
     const totalMin = Math.floor(Timer.state.duration / 60)
-    return `任务「${Timer.state.taskName}」已进行 ${minutes} 分钟（共 ${totalMin} 分钟）。请用一句话鼓励。`
+    return `任务「${Timer.state.taskName}」已进行 ${minutes} 分钟（共 ${totalMin} 分钟）。用你的方式说句话。`
   },
 
   _showBubble(text) {
@@ -310,11 +311,66 @@ const Bubbles = {
 
   _showChatModal() {
     const modal = document.getElementById('chat-modal')
-    const body = modal.querySelector('.modal-body')
-    body.innerHTML = this._chats.map(c =>
-      `<div class="chat-msg ai">${c.text}<div class="chat-msg-time" style="font-size:11px;color:var(--text-light);margin-top:4px;">${c.time}</div></div>`
-    ).join('') || '<div style="color:var(--text-light);text-align:center;">暂无消息</div>'
+    this._renderChat()
     modal.classList.add('open')
+    // 聚焦输入框
+    setTimeout(() => document.getElementById('chat-input')?.focus(), 100)
+  },
+
+  _renderChat() {
+    const body = document.getElementById('chat-modal-body')
+    if (!body) return
+    body.innerHTML = this._chats.length
+      ? this._chats.map(c =>
+          `<div class="chat-msg ${c.role}">${c.text}<div class="chat-msg-time">${c.time}</div></div>`
+        ).join('')
+      : '<div style="color:var(--text-light);text-align:center;padding:40px 0;">暂无消息</div>'
+    body.scrollTop = body.scrollHeight
+  },
+
+  async _sendMessage(text) {
+    if (!text.trim()) return
+    const input = document.getElementById('chat-input')
+    if (input) { input.value = ''; input.disabled = true }
+
+    // 保存用户消息
+    this._chats.push({
+      role: 'user',
+      text: text.trim(),
+      time: new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})
+    })
+    this._renderChat()
+
+    // 构建对话上下文
+    const chatHistory = this._chats.map(c => ({
+      role: c.role === 'user' ? 'user' : 'assistant',
+      content: c.text
+    }))
+
+    const chatSystemPrompt = '你是骆云影 黑色中长发灰蓝色眼睛178cm ISTP 傲娇暴躁毒舌刻薄嘴硬心软 说话简洁冷淡带刺但偶尔透出关心 讨厌肉麻废话 现在用户主动找你聊天 你可以多说几句 不用限制字数 但别啰嗦 别加标点'
+
+    const result = await API.chat([
+      { role: 'system', content: chatSystemPrompt },
+      ...chatHistory
+    ])
+
+    if (result) {
+      this._chats.push({
+        role: 'ai',
+        text: result,
+        time: new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})
+      })
+    } else {
+      // 回退
+      const fallbacks = ['啧 回我干嘛 不用专注', '有事说事', '…干嘛']
+      this._chats.push({
+        role: 'ai',
+        text: fallbacks[Math.floor(Math.random() * fallbacks.length)],
+        time: new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})
+      })
+    }
+    this._renderChat()
+    if (input) input.disabled = false
   },
 
   getChats() { return [...this._chats] }
@@ -498,6 +554,12 @@ document.addEventListener('DOMContentLoaded', () => {
   })
   document.getElementById('chat-modal')?.addEventListener('click', function(e) {
     if (e.target === this) this.classList.remove('open')
+  })
+
+  // --- Chat send ---
+  document.getElementById('chat-send')?.addEventListener('click', () => Bubbles._sendMessage(document.getElementById('chat-input')?.value || ''))
+  document.getElementById('chat-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') Bubbles._sendMessage(e.target.value)
   })
 
   // --- Nav items ---
