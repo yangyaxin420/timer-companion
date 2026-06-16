@@ -110,21 +110,9 @@ const Nav = {
     const navItem = document.querySelector(`[data-page="${pageId}"]`)
     if (navItem) navItem.classList.add('active')
 
-    if (pageId === 'timer') {
-      this._tryLandscape()
-    } else {
-      screen.orientation && screen.orientation.unlock && screen.orientation.unlock()
-      document.querySelector('.rotate-hint')?.classList.remove('show')
-    }
+    // landscape hint applies everywhere
+    document.querySelector('.rotate-hint')?.classList.remove('show')
   },
-  _tryLandscape() {
-    if (window.innerHeight > window.innerWidth) {
-      document.querySelector('.rotate-hint')?.classList.add('show')
-    } else {
-      document.querySelector('.rotate-hint')?.classList.remove('show')
-    }
-    screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {})
-  }
 }
 
 // ===== Timer =====
@@ -152,7 +140,6 @@ const Timer = {
     this.state.running = false
     clearInterval(this._interval)
     Bubbles.stop()
-    screen.orientation && screen.orientation.unlock && screen.orientation.unlock()
     document.querySelector('.rotate-hint')?.classList.remove('show')
     return this._getResult()
   },
@@ -194,7 +181,6 @@ const Timer = {
     clearInterval(this._interval)
     this._notify()
     Bubbles.stop()
-    screen.orientation && screen.orientation.unlock && screen.orientation.unlock()
     document.querySelector('.rotate-hint')?.classList.remove('show')
 
     const result = this._getResult()
@@ -531,18 +517,10 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   })
 
-  // --- Orientation ---
-  window.addEventListener('orientationchange', () => {
-    if (document.getElementById('page-timer').classList.contains('active')) Nav._tryLandscape()
-  })
-  window.addEventListener('resize', () => {
-    if (document.getElementById('page-timer').classList.contains('active')) {
-      if (window.innerHeight > window.innerWidth) {
-        document.querySelector('.rotate-hint')?.classList.add('show')
-      } else {
-        document.querySelector('.rotate-hint')?.classList.remove('show')
-      }
-    }
+  // --- Orientation (removed forced landscape) ---
+  // Timer works in both portrait and landscape.
+  document.getElementById('rotate-close')?.addEventListener('click', () => {
+    document.querySelector('.rotate-hint')?.classList.remove('show')
   })
 
   // --- Greeting ---
