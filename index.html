@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#FFFFFF">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.json">
+  <title>专注伴伴</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ===== 横屏提示 ===== -->
+  <div class="rotate-hint" id="rotate-hint">
+    <div class="rotate-icon">📱</div>
+    <div class="rotate-text">请将手机横屏<br>获得更好的专注体验</div>
+  </div>
+
+  <!-- ============================================================
+       API Key 输入弹窗（首次启动自动弹出）
+       ============================================================ -->
+  <div class="modal-overlay" id="apikey-modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>🔑 API Key</span>
+      </div>
+      <div class="modal-body">
+        <div class="apikey-desc">
+          输入你的 DeepSeek API Key<br>
+          不填也可以使用，AI 回复会使用本地消息
+        </div>
+        <input class="apikey-input" id="apikey-input" type="text" placeholder="sk-..." autocomplete="off">
+        <div class="apikey-hint">
+          Key 只保存在你手机本地，不会上传<br>
+          随时可以在设置里修改
+        </div>
+        <div class="apikey-actions">
+          <button class="btn-secondary" id="apikey-skip">跳过</button>
+          <button class="btn-primary" id="apikey-save">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       首页 - 设置任务
+       ============================================================ -->
+  <div class="page active" id="page-home">
+    <div class="page-content">
+      <div class="home-greeting" id="home-greeting">早上好</div>
+      <div class="home-date" id="home-date">2026年6月16日</div>
+
+      <div class="input-group">
+        <div class="input-label">📝 任务</div>
+        <input class="input-field" id="task-input" type="text" placeholder="写点什么吧…" autocomplete="off">
+      </div>
+
+      <div class="input-group">
+        <div class="input-label">⏱ 时长</div>
+        <div class="duration-row">
+          <button class="duration-btn" id="duration-down">−</button>
+          <div style="text-align:center;">
+            <div class="duration-display" id="duration-display">25</div>
+            <div class="duration-unit">分钟</div>
+          </div>
+          <button class="duration-btn" id="duration-up">+</button>
+          <input type="hidden" id="duration-input" value="25">
+        </div>
+      </div>
+
+      <div class="input-group">
+        <div class="input-label">📟 模式</div>
+        <div class="mode-toggle">
+          <button class="mode-btn active" data-mode="countdown">⏳ 倒计时</button>
+          <button class="mode-btn" data-mode="countup">⌛ 正计时</button>
+        </div>
+      </div>
+
+      <button class="btn-primary" id="btn-start">开始专注</button>
+    </div>
+
+    <div class="bottom-nav">
+      <button class="nav-item active" data-page="home">
+        <span class="nav-icon">◉</span>
+        <span>首页</span>
+      </button>
+      <button class="nav-item" data-page="records">
+        <span class="nav-icon">☰</span>
+        <span>记录</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       计时页 - 只有时间
+       ============================================================ -->
+  <div class="page" id="page-timer">
+    <div class="timer-screen" id="timer-screen">
+      <div class="timer-main-time pulse" id="timer-display">25:00</div>
+      <div class="timer-status-line" id="timer-status-line"></div>
+    </div>
+    <!-- Tap area to show exit button -->
+    <div class="timer-exit-area" id="timer-exit-area"></div>
+    <button class="timer-exit-btn" id="timer-end">✕</button>
+    <!-- AI 气泡 -->
+    <div class="bubble-container" id="bubble-container"></div>
+  </div>
+
+  <!-- ============================================================
+       结束页 - 保存记录
+       ============================================================ -->
+  <div class="page" id="page-end">
+    <div class="page-content">
+      <div style="text-align:center;margin:16px 0 20px;">
+        <div style="font-size:32px;margin-bottom:4px;">✓</div>
+        <div style="font-size:18px;font-weight:500;">完成</div>
+      </div>
+
+      <div class="end-card">
+        <div class="end-stat-row">
+          <span class="end-stat-label">任务</span>
+          <span class="end-stat-value" id="end-task">-</span>
+        </div>
+        <div class="end-stat-row">
+          <span class="end-stat-label">时长</span>
+          <span class="end-stat-value" id="end-duration">-</span>
+        </div>
+        <div class="end-stat-row">
+          <span class="end-stat-label">状态</span>
+          <span class="end-stat-value" id="end-mode">-</span>
+        </div>
+        <div class="end-stat-row" style="border-bottom:none;">
+          <span class="end-stat-label">AI 陪伴</span>
+          <span class="end-stat-value" id="end-bubble-count">-</span>
+        </div>
+      </div>
+
+      <div class="end-card">
+        <div style="font-size:13px;font-weight:500;margin-bottom:8px;color:var(--gray-400);">💬 聊天记录</div>
+        <div class="end-chat-preview" id="end-chat-log">
+          <div style="color:var(--text-light);text-align:center;">暂无 AI 回复</div>
+        </div>
+      </div>
+
+      <div class="end-actions">
+        <button class="btn-primary" id="end-save" data-result="">保存记录</button>
+        <button class="btn-secondary" id="end-again">再来</button>
+      </div>
+    </div>
+
+    <div class="bottom-nav">
+      <button class="nav-item" data-page="home">
+        <span class="nav-icon">◉</span>
+        <span>首页</span>
+      </button>
+      <button class="nav-item" data-page="records">
+        <span class="nav-icon">☰</span>
+        <span>记录</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       记录页
+       ============================================================ -->
+  <div class="page" id="page-records">
+    <div class="page-content">
+      <div style="font-size:18px;font-weight:600;margin-bottom:4px;">记录</div>
+      <div style="font-size:12px;color:var(--text-light);margin-bottom:20px;">每一次专注都会被记住</div>
+
+      <div class="records-header">
+        <button class="records-tab active" data-records-tab="week">本周</button>
+        <button class="records-tab" data-records-tab="month">本月</button>
+        <button class="records-tab" data-records-tab="all">全部</button>
+      </div>
+
+      <div class="records-summary">
+        <div class="summary-card">
+          <div class="summary-num" id="records-count">0</div>
+          <div class="summary-label" id="records-count-label">本周完成</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-num" id="records-time">0分</div>
+          <div class="summary-label">专注时长</div>
+        </div>
+      </div>
+
+      <div class="records-list" id="records-list">
+        <div class="record-empty">还没有记录<br>开始一次专注吧</div>
+      </div>
+    </div>
+
+    <div class="bottom-nav">
+      <button class="nav-item" data-page="home">
+        <span class="nav-icon">◉</span>
+        <span>首页</span>
+      </button>
+      <button class="nav-item active" data-page="records">
+        <span class="nav-icon">☰</span>
+        <span>记录</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ===== 聊天记录弹窗 ===== -->
+  <div class="modal-overlay" id="chat-modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>💬 AI 陪伴记录</span>
+        <button class="modal-close" id="chat-modal-close">✕</button>
+      </div>
+      <div class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- ===== Scripts ===== -->
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+
+</body>
+</html>

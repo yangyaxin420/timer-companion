@@ -1,0 +1,17 @@
+<!DOCTYPE html><html><body><canvas id="c" width="512" height="512"></canvas><script>
+const c = document.getElementById('c'), ctx = c.getContext('2d')
+ctx.fillStyle='#FAF8F5'; ctx.fillRect(0,0,512,512)
+ctx.beginPath(); ctx.arc(256,256,200,0,Math.PI*2); ctx.fillStyle='#D4A5A5'; ctx.fill()
+ctx.fillStyle='#fff'; ctx.font='bold 90px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'
+ctx.fillText('⏰', 256, 260)
+// Export link
+document.body.innerHTML += '<br><a id="dl192" download="icon-192.png">下载192px</a> '
+document.body.innerHTML += '<a id="dl512" download="icon-512.png">下载512px</a>'
+const dl192 = document.getElementById('dl192'), dl512 = document.getElementById('dl512')
+dl192.href = c.toDataURL().replace('image/png','image/octet-stream')
+c.width=192; c.height=192; ctx.scale(192/512,192/512); ctx.fillStyle='#FAF8F5'; ctx.fillRect(0,0,512,512)
+ctx.beginPath(); ctx.arc(256,256,200,0,Math.PI*2); ctx.fillStyle='#D4A5A5'; ctx.fill()
+ctx.fillStyle='#fff'; ctx.font='bold 90px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'
+ctx.fillText('⏰', 256, 260)
+dl192.href = c.toDataURL().replace('image/png','image/octet-stream')
+</script></body></html>
