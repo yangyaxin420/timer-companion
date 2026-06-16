@@ -232,9 +232,25 @@ const Bubbles = {
   _interval: null,
   _chats: [],
   _intervalSec: 0,
+  _storageKey: 'timer_companion_chats',
+
+  _loadChats() {
+    try {
+      const data = localStorage.getItem(this._storageKey)
+      if (data) this._chats = JSON.parse(data)
+      else this._chats = []
+    } catch { this._chats = [] }
+  },
+
+  _saveChats() {
+    try {
+      localStorage.setItem(this._storageKey, JSON.stringify(this._chats))
+    } catch {}
+  },
 
   start() {
-    this._chats = []
+    this._loadChats()
+    this._intervalSec = Math.floor(Math.random() * 120 + 90)
     this._intervalSec = Math.floor(Math.random() * 120 + 90) // 1.5 - 3.5 min
     setTimeout(() => this._generate(), 5000)
     this._interval = setInterval(() => this._generate(), this._intervalSec * 1000)
@@ -255,6 +271,7 @@ const Bubbles = {
         text,
         time: new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})
       })
+      this._saveChats()
       this._showBubble(text)
     }
   },
@@ -339,6 +356,7 @@ const Bubbles = {
       text: text.trim(),
       time: new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})
     })
+    this._saveChats()
     this._renderChat()
 
     // 构建对话上下文
@@ -369,6 +387,7 @@ const Bubbles = {
         time: new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})
       })
     }
+    this._saveChats()
     this._renderChat()
     if (input) input.disabled = false
   },
