@@ -100,6 +100,161 @@ const DB = {
   }
 }
 
+// ===== Ringtone =====
+const Ringtone = {
+  _audioCtx: null,
+  _customData: null,
+  _storageKey: 'timer_ringtone',
+
+  init() {
+    this._customData = localStorage.getItem(this._storageKey) || null
+    this._updateUI()
+    // Resume AudioContext on first tap (browser policy)
+    const resume = () => {
+      if (this._audioCtx && this._audioCtx.state === 'suspended') {
+        this._audioCtx.resume().catch(() => {})
+      }
+    }
+    document.addEventListener('click', resume, { once: true })
+    document.addEventListener('touchstart', resume, { once: true })
+  },
+
+  getCtx() {
+    if (!this._audioCtx) {
+      const C = window.AudioContext || window.webkitAudioContext
+      if (C) this._audioCtx = new C()
+    }
+    return this._audioCtx
+  },
+
+  hasCustom() { return !!this._customData },
+  getName() {
+    if (!this._customData) return '默认铃声'
+    try {
+      const info = this._customData.split(',')[0]
+      const mime = info.split(':')[1]?.split(';')[0] || ''
+      const names = { 'audio/mpeg': 'MP3', 'audio/wav': 'WAV', 'audio/mp4': 'M4A', 'audio/ogg': 'OGG', 'audio/webm': 'WebM', 'audio/x-m4a': 'M4A' }
+      return `已上传 · ${names[mime] || '音频'}`
+    } catch { return '已上传' }
+  },
+  getSize() {
+    if (!this._customData) return 0
+    return Math.round((this._customData.length * 3) / 4 / 1024)
+  },
+
+  save(dataUrl) {
+    this._customData = dataUrl
+    localStorage.setItem(this._storageKey, dataUrl)
+    this._updateUI()
+  },
+
+  reset() {
+    this._customData = null
+    localStorage.removeItem(this._storageKey)
+    this._updateUI()
+  },
+
+  _updateUI() {
+    const el = document.getElementById('ringtone-status')
+    if (!el) return
+    el.textContent = this.getName()
+    if (this.hasCustom()) {
+      const size = this.getSize()
+      el.textContent += `（${size}KB）`
+    }
+    const resetBtn = document.getElementById('ringtone-reset-btn')
+    if (resetBtn) resetBtn.style.display = this.hasCustom() ? '' : 'none'
+  },
+
+  async play() {
+    // Try custom first
+    if (this._customData) {
+      try {
+        const audio = new Audio(this._customData)
+        audio.volume = 0.6
+        await audio.play()
+        return
+      } catch (e) {
+        console.warn('自定义铃声播放失败，用默认', e)
+        // Fall through to default
+      }
+    }
+    this._playDefaultBell()
+  },
+
+  // Gentle two-tone bell via Web Audio API — no file needed
+  _playDefaultBell() {
+    const ctx = this.getCtx()
+    if (!ctx) return
+    try {
+      const now = ctx.currentTime
+
+      // First chime (slightly louder)
+      const o1 = ctx.createOscillator()
+      const g1 = ctx.createGain()
+      o1.connect(g1).connect(ctx.destination)
+      o1.type = 'sine'
+      o1.frequency.setValueAtTime(880, now)       // A5
+      o1.frequency.exponentialRampToValueAtTime(740, now + 0.08)  // F#5 — slide down
+      g1.gain.setValueAtTime(0.25, now)
+      g1.gain.exponentialRampToValueAtTime(0.001, now + 0.6)
+      o1.start(now); o1.stop(now + 0.6)
+
+      // Second chime (softer, 0.35s later)
+      const o2 = ctx.createOscillator()
+      const g2 = ctx.createGain()
+      o2.connect(g2).connect(ctx.destination)
+      o2.type = 'sine'
+      o2.frequency.setValueAtTime(1320, now + 0.35)  // E6
+      o2.frequency.exponentialRampToValueAtTime(1100, now + 0.45)
+      g2.gain.setValueAtTime(0.15, now + 0.35)
+      g2.gain.exponentialRampToValueAtTime(0.001, now + 1.0)
+      o2.start(now + 0.35); o2.stop(now + 1.0)
+
+      // Sustain tail (gentle pad decay)
+      const o3 = ctx.createOscillator()
+      const g3 = ctx.createGain()
+      o3.connect(g3).connect(ctx.destination)
+      o3.type = 'sine'
+      o3.frequency.setValueAtTime(440, now)        // A4 pedal
+      g3.gain.setValueAtTime(0.06, now)
+      g3.gain.exponentialRampToValueAtTime(0.001, now + 1.5)
+      o3.start(now); o3.stop(now + 1.5)
+
+      // Vibrate briefly
+      if (navigator.vibrate) navigator.vibrate(200)
+    } catch (e) {
+      console.warn('默认铃声播放失败', e)
+    }
+  },
+
+  // Preview — also resume AudioContext if suspended
+  async preview() {
+    // Ensure context is running
+    const ctx = this.getCtx()
+    if (ctx && ctx.state === 'suspended') {
+      try { await ctx.resume() } catch {}
+    }
+    await this.play()
+  },
+
+  // Handle file selection
+  handleFile(file) {
+    if (!file) return
+    if (file.size > 2 * 1024 * 1024) {
+      alert('文件过大，请选择 2MB 以内的音频')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = e => {
+      this.save(e.target.result)
+      alert('铃声已保存')
+    }
+    reader.onerror = () => alert('读取失败')
+    reader.readAsDataURL(file)
+  }
+}
+
 // ===== Navigation =====
 const Nav = {
   show(pageId) {
@@ -180,6 +335,7 @@ const Timer = {
     this.state.running = false
     clearInterval(this._interval)
     this._notify()
+    Ringtone.play()   // 🔔 响铃
     Bubbles.stop()
     document.querySelector('.rotate-hint')?.classList.remove('show')
 
@@ -472,6 +628,9 @@ const Records = {
 // ===== App Init =====
 document.addEventListener('DOMContentLoaded', () => {
 
+  // --- Ringtone init ---
+  Ringtone.init()
+
   // --- API Key Modal ---
   if (!KeyManager.has()) {
     document.getElementById('apikey-modal').classList.add('open')
@@ -486,6 +645,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('apikey-skip')?.addEventListener('click', () => {
     document.getElementById('apikey-modal').classList.remove('open')
+  })
+
+  // --- Ringtone toggle (collapsible) ---
+  const ringtonePanel = document.getElementById('ringtone-panel')
+  const ringtoneArrow = document.getElementById('ringtone-arrow')
+  document.getElementById('ringtone-toggle')?.addEventListener('click', () => {
+    const open = ringtonePanel?.classList.toggle('open')
+    if (ringtoneArrow) ringtoneArrow.classList.toggle('open', open)
+  })
+
+  // --- Ringtone upload ---
+  const fileInput = document.getElementById('ringtone-file-input')
+  document.getElementById('ringtone-upload-btn')?.addEventListener('click', () => fileInput?.click())
+  fileInput?.addEventListener('change', e => {
+    if (e.target.files?.[0]) Ringtone.handleFile(e.target.files[0])
+    e.target.value = ''
+  })
+
+  // --- Ringtone test ---
+  document.getElementById('ringtone-test-btn')?.addEventListener('click', () => Ringtone.preview())
+
+  // --- Ringtone reset ---
+  document.getElementById('ringtone-reset-btn')?.addEventListener('click', () => {
+    if (confirm('重置为默认铃声？')) {
+      Ringtone.reset()
+    }
   })
 
   // --- Duration controls ---

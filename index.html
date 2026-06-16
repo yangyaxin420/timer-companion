@@ -79,6 +79,24 @@
         </div>
       </div>
 
+      <!-- ===== 铃声设置（可折叠） ===== -->
+      <div class="input-group">
+        <div class="input-label ringtone-header" id="ringtone-toggle">
+          <span>🔔 铃声</span>
+          <span class="ringtone-arrow" id="ringtone-arrow">▸</span>
+        </div>
+        <div class="ringtone-panel" id="ringtone-panel">
+          <div class="ringtone-status" id="ringtone-status">默认铃声</div>
+          <div class="ringtone-actions">
+            <button class="ringtone-btn" id="ringtone-upload-btn">上传</button>
+            <button class="ringtone-btn" id="ringtone-test-btn">▶ 试听</button>
+            <button class="ringtone-btn" id="ringtone-reset-btn">重置</button>
+          </div>
+          <input type="file" id="ringtone-file-input" accept="audio/*" style="display:none;">
+          <div class="ringtone-hint">支持 MP3 / WAV / M4A，建议 30 秒以内</div>
+        </div>
+      </div>
+
       <button class="btn-primary" id="btn-start">开始专注</button>
     </div>
 
