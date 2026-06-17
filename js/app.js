@@ -167,6 +167,13 @@ const Ringtone = {
   },
 
   async play() {
+    // Resume AudioContext if suspended (needed for timer finish which isn't user-initiated)
+    const ctx = this.getCtx()
+    let ctxReady = true
+    if (ctx && ctx.state === 'suspended') {
+      try { await ctx.resume(); ctxReady = true } catch { ctxReady = false }
+    }
+
     // Try custom first
     if (this._customData) {
       try {
@@ -179,7 +186,7 @@ const Ringtone = {
         // Fall through to default
       }
     }
-    this._playDefaultBell()
+    if (ctxReady) this._playDefaultBell()
   },
 
   // Gentle two-tone bell via Web Audio API — no file needed
@@ -289,6 +296,8 @@ const Timer = {
     this._interval = setInterval(() => this._tick(), 100)
     this._updateDisplay()
     Bubbles.start()
+    // 提前唤醒音频上下文（点"开始专注"时有用户手势）
+    Ringtone.getCtx()?.resume?.()?.catch?.()
   },
 
   stop() {
@@ -479,7 +488,7 @@ const Bubbles = {
     bubble.style.marginLeft = off + '%'
     container.appendChild(bubble)
     bubble.addEventListener('click', () => this._showChatModal())
-    setTimeout(() => bubble.remove(), 10500)
+    setTimeout(() => bubble.remove(), 3000)
   },
 
   _showChatModal() {
