@@ -393,6 +393,7 @@ const Timer = {
     clearInterval(this._interval)
     this._notify()
     Ringtone.play()   // 🔔 响铃
+    setTimeout(() => Ringtone.play(), 500)  // 重试一次（移动端 AudioContext 恢复有时需延迟）
     Bubbles.stop()
     document.querySelector('.rotate-hint')?.classList.remove('show')
 
