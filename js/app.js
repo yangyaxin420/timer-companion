@@ -224,43 +224,32 @@ const Ringtone = {
   },
 
   async play() {
-    // === 方案1: 真实文件 bell.wav（HTTPS 真实路径，最可靠）===
-    if (this._defaultEl) {
-      try {
-        this._defaultEl.currentTime = 0
-        await this._defaultEl.play()
-        if (navigator.vibrate) navigator.vibrate(200)
-        return
-      } catch (e) { console.warn('× bell.wav', e) }
-    }
-
-    // === 方案2: 自定义铃声 data URL ===
-    if (this._customData) {
-      try {
-        const a = new Audio(this._customData)
-        a.volume = 0.6; await a.play()
-        if (navigator.vibrate) navigator.vibrate(200)
-        return
-      } catch (e) { console.warn('× customData', e) }
-    }
-
-    // === 方案3: Web Audio API ===
+    // === 方案1: Web Audio API（用户手势时已解锁，移动端最可靠）===
     const ctx = this._audioCtx || this.getCtx()
     if (ctx) {
       try { if (ctx.state === 'suspended') await ctx.resume() } catch {}
 
-      // buffer（自定义优先）
-      const buf = this._customBuffer || this._defaultBuffer
-      if (buf) {
+      // ① 自定义 buffer（已解码的上传铃声）
+      if (this._customBuffer) {
         try {
           const src = ctx.createBufferSource()
-          src.buffer = buf; src.connect(ctx.destination); src.start()
+          src.buffer = this._customBuffer; src.connect(ctx.destination); src.start()
           if (navigator.vibrate) navigator.vibrate(200)
           return
-        } catch (e) { console.warn('× buf', e) }
+        } catch (e) { console.warn('× customBuf', e) }
       }
 
-      // 即时合成
+      // ② 默认 buffer（合成波形）
+      if (this._defaultBuffer) {
+        try {
+          const src = ctx.createBufferSource()
+          src.buffer = this._defaultBuffer; src.connect(ctx.destination); src.start()
+          if (navigator.vibrate) navigator.vibrate(200)
+          return
+        } catch (e) { console.warn('× defBuf', e) }
+      }
+
+      // ③ 即时合成
       try {
         const sr = ctx.sampleRate, len = Math.floor(sr * 0.3)
         const b = ctx.createBuffer(1, len, sr)
@@ -272,7 +261,7 @@ const Ringtone = {
         return
       } catch (e) { console.warn('× synth', e) }
 
-      // 振荡器
+      // ④ 振荡器（最底层，什么都不要）
       try {
         const now = ctx.currentTime
         const o = ctx.createOscillator(), g = ctx.createGain()
@@ -286,7 +275,17 @@ const Ringtone = {
       } catch (e) { console.warn('× osc', e) }
     }
 
-    // === 保底振动 ===
+    // === 方案2: HTMLAudioElement（移动端非手势受限较大）===
+    if (this._defaultEl) {
+      try { this._defaultEl.currentTime = 0; await this._defaultEl.play(); if (navigator.vibrate) navigator.vibrate(200); return }
+      catch (e) { console.warn('× defaultEl', e) }
+    }
+    if (this._customData) {
+      try { const a = new Audio(this._customData); a.volume = 0.6; await a.play(); if (navigator.vibrate) navigator.vibrate(200); return }
+      catch (e) { console.warn('× customData', e) }
+    }
+
+    // === 保底 ===
     if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200])
   },
 
