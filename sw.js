@@ -1,4 +1,4 @@
-const CACHE = 'focus-v2'
+const CACHE = 'focus-v3'
 const FILES = ['/', '/index.html', '/css/style.css', '/js/app.js', '/js/config.js', '/manifest.json']
 
 self.addEventListener('install', e => {
@@ -7,11 +7,17 @@ self.addEventListener('install', e => {
 })
 
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))))
+  e.waitUntil(
+    Promise.all([
+      caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))),
+      // 立即接管所有页面
+      self.clients.claim()
+    ])
+  )
 })
 
 self.addEventListener('fetch', e => {
   e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request).catch(() => r))
+    fetch(e.request).catch(() => caches.match(e.request))
   )
 })
