@@ -101,17 +101,23 @@ const DB = {
 }
 
 // ===== Ringtone =====
-// 全程走 Web Audio API 解码播放，不依赖 HTMLAudioElement（移动端自动播放限制）
+// 方案1: 真实文件 bell.wav → HTMLAudioElement（最基础直接）
+// 方案2: Web Audio buffer（解码/合成）
+// 方案3: 即时合成 buffer / 振荡器
+// 方案4: 振动保底
 const Ringtone = {
   _audioCtx: null,
   _customData: null,
   _customBuffer: null,
   _defaultBuffer: null,
+  _defaultEl: null,
   _storageKey: 'timer_ringtone',
   _unlocked: false,
 
   init() {
     this._customData = localStorage.getItem(this._storageKey) || null
+    this._defaultEl = new Audio('./bell.wav')
+    this._defaultEl.volume = 0.6
     this._updateUI()
   },
 
@@ -123,36 +129,35 @@ const Ringtone = {
     return this._audioCtx
   },
 
-  // 用户手势中调用：解锁 AudioContext + 预解码/生成 buffer
   unlock() {
     if (this._unlocked) return
     const ctx = this.getCtx()
-    if (!ctx) return
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+    if (ctx) {
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+      try {
+        const sr = ctx.sampleRate, len = Math.floor(sr * 0.05)
+        const buf = ctx.createBuffer(1, len, sr)
+        const d = buf.getChannelData(0)
+        for (let i = 0; i < len; i++) d[i] = Math.sin(2 * Math.PI * 440 * i / sr) * 0.03
+        const n = ctx.createBufferSource()
+        n.buffer = buf; n.connect(ctx.destination); n.start()
+      } catch {}
+    }
 
-    // 播放一个真的短音（极低音量）来彻底激活音频通道
-    // 静音 buffer 在某些浏览器上不足以解锁
-    try {
-      const sr = ctx.sampleRate, len = Math.floor(sr * 0.08)
-      const buf = ctx.createBuffer(1, len, sr)
-      const d = buf.getChannelData(0)
-      for (let i = 0; i < len; i++) d[i] = Math.sin(2 * Math.PI * 440 * i / sr) * 0.03  // 3% 音量
-      const n = ctx.createBufferSource()
-      n.buffer = buf; n.connect(ctx.destination); n.start()
-    } catch {}
+    // 预加载默认铃声 Audio 元素
+    if (this._defaultEl) {
+      this._defaultEl.load()
+      this._defaultEl.play().then(() => { this._defaultEl.pause(); this._defaultEl.currentTime = 0 }).catch(() => {})
+    }
 
-    // 预生成默认铃声 buffer
+    // 预生成 buffer（回退用）
     if (!this._defaultBuffer) this._defaultBuffer = this._genDefaultBuffer()
-
-    // 预解码自定义铃声 buffer（异步）
     if (this._customData && !this._customBuffer) {
       this._decodeDataUrl(this._customData).then(b => { this._customBuffer = b })
     }
-
     this._unlocked = true
   },
 
-  // 解码 data URL → AudioBuffer
   async _decodeDataUrl(dataUrl) {
     try {
       const ctx = this._audioCtx
@@ -160,13 +165,9 @@ const Ringtone = {
       const resp = await fetch(dataUrl)
       const ab = await resp.arrayBuffer()
       return await ctx.decodeAudioData(ab)
-    } catch (e) {
-      console.warn('自定义铃声解码失败', e)
-      return null
-    }
+    } catch { return null }
   },
 
-  // 合成默认铃声（两段式衰减波形，与之前 WAV 同样的听感）
   _genDefaultBuffer() {
     const ctx = this._audioCtx
     if (!ctx) return null
@@ -199,7 +200,6 @@ const Ringtone = {
     this._customData = dataUrl
     this._customBuffer = null
     localStorage.setItem(this._storageKey, dataUrl)
-    // 立即开始解码（unlock() 里也会解码，双重保障）
     this._decodeDataUrl(dataUrl).then(b => { this._customBuffer = b })
     this._updateUI()
   },
@@ -224,58 +224,55 @@ const Ringtone = {
   },
 
   async play() {
-    const ctx = this._audioCtx
-
-    // 确保 context 运行
-    if (ctx && ctx.state === 'suspended') {
-      try { await ctx.resume() } catch {}
-    }
-
-    // === 多层尝试，哪个能出声算哪个 ===
-
-    // ① 自定义 buffer（Web Audio 解码播放）
-    if (this._customBuffer && ctx) {
+    // === 方案1: 真实文件 bell.wav（HTTPS 真实路径，最可靠）===
+    if (this._defaultEl) {
       try {
-        const src = ctx.createBufferSource()
-        src.buffer = this._customBuffer
-        src.connect(ctx.destination)
-        src.start()
+        this._defaultEl.currentTime = 0
+        await this._defaultEl.play()
         if (navigator.vibrate) navigator.vibrate(200)
         return
-      } catch (e) { console.warn('× customBuffer', e) }
+      } catch (e) { console.warn('× bell.wav', e) }
     }
 
-    // ② 默认 buffer
-    if (this._defaultBuffer && ctx) {
+    // === 方案2: 自定义铃声 data URL ===
+    if (this._customData) {
       try {
-        const src = ctx.createBufferSource()
-        src.buffer = this._defaultBuffer
-        src.connect(ctx.destination)
-        src.start()
+        const a = new Audio(this._customData)
+        a.volume = 0.6; await a.play()
         if (navigator.vibrate) navigator.vibrate(200)
         return
-      } catch (e) { console.warn('× defaultBuffer', e) }
+      } catch (e) { console.warn('× customData', e) }
     }
 
-    // ③ 即时合成 buffer（不依赖预解码）
+    // === 方案3: Web Audio API ===
+    const ctx = this._audioCtx || this.getCtx()
     if (ctx) {
+      try { if (ctx.state === 'suspended') await ctx.resume() } catch {}
+
+      // buffer（自定义优先）
+      const buf = this._customBuffer || this._defaultBuffer
+      if (buf) {
+        try {
+          const src = ctx.createBufferSource()
+          src.buffer = buf; src.connect(ctx.destination); src.start()
+          if (navigator.vibrate) navigator.vibrate(200)
+          return
+        } catch (e) { console.warn('× buf', e) }
+      }
+
+      // 即时合成
       try {
-        const sr = ctx.sampleRate, len = Math.floor(sr * 0.4)
-        const buf = ctx.createBuffer(1, len, sr)
-        const d = buf.getChannelData(0)
-        for (let i = 0; i < len; i++) {
-          const t = i / sr
-          d[i] = Math.sin(2 * Math.PI * (t < 0.2 ? 880 : 1200) * t) * 0.3 * Math.max(0, 1 - t / 0.4)
-        }
+        const sr = ctx.sampleRate, len = Math.floor(sr * 0.3)
+        const b = ctx.createBuffer(1, len, sr)
+        const d = b.getChannelData(0)
+        for (let i = 0; i < len; i++) d[i] = Math.sin(2 * Math.PI * 880 * i / sr) * 0.25
         const src = ctx.createBufferSource()
-        src.buffer = buf; src.connect(ctx.destination); src.start()
+        src.buffer = b; src.connect(ctx.destination); src.start()
         if (navigator.vibrate) navigator.vibrate(200)
         return
-      } catch (e) { console.warn('× instantBuffer', e) }
-    }
+      } catch (e) { console.warn('× synth', e) }
 
-    // ④ 振荡器（最基础 Web Audio，什么 buffer 都不需要）
-    if (ctx) {
+      // 振荡器
       try {
         const now = ctx.currentTime
         const o = ctx.createOscillator(), g = ctx.createGain()
@@ -286,24 +283,13 @@ const Ringtone = {
         o.start(now); o.stop(now + 0.5)
         if (navigator.vibrate) navigator.vibrate(200)
         return
-      } catch (e) { console.warn('× oscillator', e) }
+      } catch (e) { console.warn('× osc', e) }
     }
 
-    // ⑤ HTMLAudioElement 硬播（最不靠谱但试试无妨）
-    if (this._customData) {
-      try {
-        const a = new Audio(this._customData)
-        a.volume = 0.6; await a.play()
-        if (navigator.vibrate) navigator.vibrate(200)
-        return
-      } catch (e) { console.warn('× audioElement', e) }
-    }
-
-    // ⑥ 全都失败了，至少振动
+    // === 保底振动 ===
     if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200])
   },
 
-  // 试听：用户手势触发，可以兼容 Audio element
   async preview() {
     this.unlock()
     await this.play()
