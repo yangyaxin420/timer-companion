@@ -130,11 +130,15 @@ const Ringtone = {
     if (!ctx) return
     if (ctx.state === 'suspended') ctx.resume().catch(() => {})
 
-    // 播放静音解锁 Web Audio 通道
+    // 播放一个真的短音（极低音量）来彻底激活音频通道
+    // 静音 buffer 在某些浏览器上不足以解锁
     try {
-      const s = ctx.createBuffer(1, 1, ctx.sampleRate)
+      const sr = ctx.sampleRate, len = Math.floor(sr * 0.08)
+      const buf = ctx.createBuffer(1, len, sr)
+      const d = buf.getChannelData(0)
+      for (let i = 0; i < len; i++) d[i] = Math.sin(2 * Math.PI * 440 * i / sr) * 0.03  // 3% 音量
       const n = ctx.createBufferSource()
-      n.buffer = s; n.connect(ctx.destination); n.start()
+      n.buffer = buf; n.connect(ctx.destination); n.start()
     } catch {}
 
     // 预生成默认铃声 buffer
@@ -193,11 +197,11 @@ const Ringtone = {
 
   save(dataUrl) {
     this._customData = dataUrl
-    this._customBuffer = null  // 下次触发时重新解码
+    this._customBuffer = null
     localStorage.setItem(this._storageKey, dataUrl)
+    // 立即开始解码（unlock() 里也会解码，双重保障）
     this._decodeDataUrl(dataUrl).then(b => { this._customBuffer = b })
     this._updateUI()
-    if (this._unlocked) this._unlocked = false  // 新铃声需重新解锁
   },
 
   reset() {
@@ -221,13 +225,16 @@ const Ringtone = {
 
   async play() {
     const ctx = this._audioCtx
-    if (!ctx) return
 
     // 确保 context 运行
-    try { if (ctx.state === 'suspended') await ctx.resume() } catch {}
+    if (ctx && ctx.state === 'suspended') {
+      try { await ctx.resume() } catch {}
+    }
 
-    // ① 自定义铃声 buffer（最高优先级）
-    if (this._customBuffer) {
+    // === 多层尝试，哪个能出声算哪个 ===
+
+    // ① 自定义 buffer（Web Audio 解码播放）
+    if (this._customBuffer && ctx) {
       try {
         const src = ctx.createBufferSource()
         src.buffer = this._customBuffer
@@ -235,11 +242,11 @@ const Ringtone = {
         src.start()
         if (navigator.vibrate) navigator.vibrate(200)
         return
-      } catch (e) { console.warn('自定义buffer播放失败', e) }
+      } catch (e) { console.warn('× customBuffer', e) }
     }
 
-    // ② 默认铃声 buffer
-    if (this._defaultBuffer) {
+    // ② 默认 buffer
+    if (this._defaultBuffer && ctx) {
       try {
         const src = ctx.createBufferSource()
         src.buffer = this._defaultBuffer
@@ -247,19 +254,53 @@ const Ringtone = {
         src.start()
         if (navigator.vibrate) navigator.vibrate(200)
         return
-      } catch (e) { console.warn('默认buffer播放失败', e) }
+      } catch (e) { console.warn('× defaultBuffer', e) }
     }
 
-    // ③ 终极兜底：现场合成一个 0.3s 的 beep
-    try {
-      const sr = ctx.sampleRate, len = Math.floor(sr * 0.3)
-      const buf = ctx.createBuffer(1, len, sr)
-      const d = buf.getChannelData(0)
-      for (let i = 0; i < len; i++) d[i] = Math.sin(2 * Math.PI * 880 * i / sr) * 0.3
-      const src = ctx.createBufferSource()
-      src.buffer = buf; src.connect(ctx.destination); src.start()
-      if (navigator.vibrate) navigator.vibrate(200)
-    } catch {}
+    // ③ 即时合成 buffer（不依赖预解码）
+    if (ctx) {
+      try {
+        const sr = ctx.sampleRate, len = Math.floor(sr * 0.4)
+        const buf = ctx.createBuffer(1, len, sr)
+        const d = buf.getChannelData(0)
+        for (let i = 0; i < len; i++) {
+          const t = i / sr
+          d[i] = Math.sin(2 * Math.PI * (t < 0.2 ? 880 : 1200) * t) * 0.3 * Math.max(0, 1 - t / 0.4)
+        }
+        const src = ctx.createBufferSource()
+        src.buffer = buf; src.connect(ctx.destination); src.start()
+        if (navigator.vibrate) navigator.vibrate(200)
+        return
+      } catch (e) { console.warn('× instantBuffer', e) }
+    }
+
+    // ④ 振荡器（最基础 Web Audio，什么 buffer 都不需要）
+    if (ctx) {
+      try {
+        const now = ctx.currentTime
+        const o = ctx.createOscillator(), g = ctx.createGain()
+        o.connect(g).connect(ctx.destination)
+        o.type = 'sine'; o.frequency.value = 880
+        g.gain.setValueAtTime(0.3, now)
+        g.gain.exponentialRampToValueAtTime(0.001, now + 0.5)
+        o.start(now); o.stop(now + 0.5)
+        if (navigator.vibrate) navigator.vibrate(200)
+        return
+      } catch (e) { console.warn('× oscillator', e) }
+    }
+
+    // ⑤ HTMLAudioElement 硬播（最不靠谱但试试无妨）
+    if (this._customData) {
+      try {
+        const a = new Audio(this._customData)
+        a.volume = 0.6; await a.play()
+        if (navigator.vibrate) navigator.vibrate(200)
+        return
+      } catch (e) { console.warn('× audioElement', e) }
+    }
+
+    // ⑥ 全都失败了，至少振动
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200])
   },
 
   // 试听：用户手势触发，可以兼容 Audio element
@@ -510,7 +551,7 @@ const Bubbles = {
     bubble.style.marginLeft = off + '%'
     container.appendChild(bubble)
     bubble.addEventListener('click', () => this._showChatModal())
-    setTimeout(() => bubble.remove(), 3000)
+    setTimeout(() => bubble.remove(), 6000)
   },
 
   _showChatModal() {
