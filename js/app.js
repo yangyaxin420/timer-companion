@@ -103,14 +103,37 @@ const DB = {
 // ===== Ringtone =====
 const Ringtone = {
   _audioCtx: null,
-  _bellBuffer: null,
+  _defaultUrl: null,
   _customData: null,
+  _primedAudio: null,
   _storageKey: 'timer_ringtone',
   _unlocked: false,
 
   init() {
     this._customData = localStorage.getItem(this._storageKey) || null
+    // 生成默认铃声的 WAV blob URL（运行时合成，无需外部文件）
+    try {
+      this._defaultUrl = this._generateDefaultWav()
+    } catch {}
     this._updateUI()
+  },
+
+  _generateDefaultWav() {
+    const sr = 8000, dur = 0.5, len = sr * dur
+    const buf = new ArrayBuffer(44 + len)
+    const v = new DataView(buf)
+    const w = (off, str) => { for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i)) }
+    w(0, 'RIFF'); v.setUint32(4, 36 + len, true); w(8, 'WAVE')
+    w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true)
+    v.setUint16(22, 1, true); v.setUint32(24, sr, true)
+    v.setUint32(28, sr, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true)
+    w(36, 'data'); v.setUint32(40, len, true)
+    for (let i = 0; i < len; i++) {
+      const t = i / sr, freq = t < 0.25 ? 880 : 1320
+      const amp = Math.max(0, 1 - t / dur)
+      v.setUint8(44 + i, Math.round(128 + 100 * Math.sin(2 * Math.PI * freq * t) * amp))
+    }
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))
   },
 
   getCtx() {
@@ -121,43 +144,37 @@ const Ringtone = {
     return this._audioCtx
   },
 
-  // 在用户手势中调用，解锁音频上下文 + 预渲染铃声
+  // 用户手势中调用：解锁音频通道 + 预构建 Audio 元素
   unlock() {
     if (this._unlocked) return
-    const ctx = this.getCtx()
-    if (!ctx) return
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {})
-    this._bellBuffer = this._renderBellBuffer()
-    this._unlocked = true
-  },
 
-  _renderBellBuffer() {
-    const ctx = this._audioCtx
-    if (!ctx) return null
-    try {
-      const sr = ctx.sampleRate
-      const dur = 0.6
-      const len = Math.floor(sr * dur)
-      const buf = ctx.createBuffer(1, len, sr)
-      const data = buf.getChannelData(0)
-      for (let i = 0; i < len; i++) {
-        const t = i / sr
-        let freq, amp
-        if (t < 0.3) {
-          freq = 880
-          amp = 0.3 * (1 - t / 0.3)
-        } else {
-          freq = 1320
-          amp = 0.2 * (1 - (t - 0.3) / 0.3)
-        }
-        // 基频 + 泛音，声音更饱满
-        data[i] = (Math.sin(2 * Math.PI * freq * t) + 0.3 * Math.sin(4 * Math.PI * freq * t)) * amp
-      }
-      return buf
-    } catch (e) {
-      console.warn('渲染铃声失败', e)
-      return null
+    // ① 预热 AudioContext + 播放静音（解锁 Web Audio 通道）
+    const ctx = this.getCtx()
+    if (ctx) {
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+      try {
+        const silent = ctx.createBuffer(1, 1, ctx.sampleRate)
+        const src = ctx.createBufferSource()
+        src.buffer = silent
+        src.connect(ctx.destination)
+        src.start()
+      } catch {}
     }
+
+    // ② 预构建 Audio 元素 + 静默播放一次（解锁 HTMLAudioElement 通道）
+    const src = this._customData || this._defaultUrl
+    if (src) {
+      this._primedAudio = new Audio(src)
+      this._primedAudio.volume = 0.01
+      this._primedAudio.load()
+      this._primedAudio.play().then(() => {
+        this._primedAudio.pause()
+        this._primedAudio.currentTime = 0
+        this._primedAudio.volume = 0.6
+      }).catch(() => {})
+    }
+
+    this._unlocked = true
   },
 
   hasCustom() { return !!this._customData },
@@ -178,12 +195,17 @@ const Ringtone = {
   save(dataUrl) {
     this._customData = dataUrl
     localStorage.setItem(this._storageKey, dataUrl)
+    // 更新预构建 Audio 元素
+    this._primedAudio = new Audio(dataUrl)
+    this._primedAudio.volume = 0.6
     this._updateUI()
   },
 
   reset() {
     this._customData = null
     localStorage.removeItem(this._storageKey)
+    this._primedAudio = this._defaultUrl ? new Audio(this._defaultUrl) : null
+    if (this._primedAudio) this._primedAudio.volume = 0.6
     this._updateUI()
   },
 
@@ -200,77 +222,50 @@ const Ringtone = {
   },
 
   async play() {
-    // 1) 自定义铃声：用 HTMLAudioElement
-    if (this._customData) {
+    // ① 预构建的 Audio 元素（用户手势时已解锁，最可靠）
+    if (this._primedAudio) {
       try {
-        const audio = new Audio(this._customData)
-        audio.volume = 0.6
-        await audio.play()
+        this._primedAudio.currentTime = 0
+        await this._primedAudio.play()
+        if (navigator.vibrate) navigator.vibrate(200)
         return
       } catch (e) {
-        console.warn('自定义铃声播放失败，尝试默认', e)
+        console.warn('primedAudio播放失败', e)
       }
     }
 
-    // 2) 默认铃声：预渲染 buffer → AudioBufferSourceNode
+    // ② 用 AudioContext buffer 作为回退
     const ctx = this._audioCtx
-    if (ctx && this._bellBuffer) {
+    if (ctx) {
       try {
         if (ctx.state === 'suspended') await ctx.resume()
         const src = ctx.createBufferSource()
-        src.buffer = this._bellBuffer
+        // 生成一个简单的 buffer
+        const sr = ctx.sampleRate, dur = 0.4, len = Math.floor(sr * dur)
+        const buf = ctx.createBuffer(1, len, sr)
+        const data = buf.getChannelData(0)
+        for (let i = 0; i < len; i++) {
+          const t = i / sr
+          data[i] = Math.sin(2 * Math.PI * (t < 0.2 ? 880 : 1200) * t) * 0.3 * Math.max(0, 1 - t / dur)
+        }
+        src.buffer = buf
         src.connect(ctx.destination)
         src.start()
         if (navigator.vibrate) navigator.vibrate(200)
         return
       } catch (e) {
-        console.warn('默认buffer播放失败，尝试振荡器回退', e)
+        console.warn('AudioContext回退失败', e)
       }
     }
 
-    // 3) 最终回退：振荡器
-    this._playDefaultFallback()
-  },
-
-  // 振荡器回退（仅当 buffer 方案不可用时）
-  _playDefaultFallback() {
-    const ctx = this.getCtx()
-    if (!ctx) return
-    try {
-      if (ctx.state === 'suspended') ctx.resume().catch(() => {})
-      const now = ctx.currentTime
-      const o1 = ctx.createOscillator()
-      const g1 = ctx.createGain()
-      o1.connect(g1).connect(ctx.destination)
-      o1.type = 'sine'
-      o1.frequency.setValueAtTime(880, now)
-      o1.frequency.exponentialRampToValueAtTime(740, now + 0.08)
-      g1.gain.setValueAtTime(0.25, now)
-      g1.gain.exponentialRampToValueAtTime(0.001, now + 0.6)
-      o1.start(now); o1.stop(now + 0.6)
-
-      const o2 = ctx.createOscillator()
-      const g2 = ctx.createGain()
-      o2.connect(g2).connect(ctx.destination)
-      o2.type = 'sine'
-      o2.frequency.setValueAtTime(1320, now + 0.35)
-      o2.frequency.exponentialRampToValueAtTime(1100, now + 0.45)
-      g2.gain.setValueAtTime(0.15, now + 0.35)
-      g2.gain.exponentialRampToValueAtTime(0.001, now + 1.0)
-      o2.start(now + 0.35); o2.stop(now + 1.0)
-
-      const o3 = ctx.createOscillator()
-      const g3 = ctx.createGain()
-      o3.connect(g3).connect(ctx.destination)
-      o3.type = 'sine'
-      o3.frequency.setValueAtTime(440, now)
-      g3.gain.setValueAtTime(0.06, now)
-      g3.gain.exponentialRampToValueAtTime(0.001, now + 1.5)
-      o3.start(now); o3.stop(now + 1.5)
-
-      if (navigator.vibrate) navigator.vibrate(200)
-    } catch (e) {
-      console.warn('默认铃声最终回退失败', e)
+    // ③ 终极兜底：新建 Audio 元素直接播放
+    const fallbackSrc = this._customData || this._defaultUrl
+    if (fallbackSrc) {
+      try {
+        const a = new Audio(fallbackSrc)
+        a.volume = 0.6
+        await a.play()
+      } catch {}
     }
   },
 
