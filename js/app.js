@@ -103,20 +103,14 @@ const DB = {
 // ===== Ringtone =====
 const Ringtone = {
   _audioCtx: null,
+  _bellBuffer: null,
   _customData: null,
   _storageKey: 'timer_ringtone',
+  _unlocked: false,
 
   init() {
     this._customData = localStorage.getItem(this._storageKey) || null
     this._updateUI()
-    // Resume AudioContext on first tap (browser policy)
-    const resume = () => {
-      if (this._audioCtx && this._audioCtx.state === 'suspended') {
-        this._audioCtx.resume().catch(() => {})
-      }
-    }
-    document.addEventListener('click', resume, { once: true })
-    document.addEventListener('touchstart', resume, { once: true })
   },
 
   getCtx() {
@@ -125,6 +119,45 @@ const Ringtone = {
       if (C) this._audioCtx = new C()
     }
     return this._audioCtx
+  },
+
+  // 在用户手势中调用，解锁音频上下文 + 预渲染铃声
+  unlock() {
+    if (this._unlocked) return
+    const ctx = this.getCtx()
+    if (!ctx) return
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+    this._bellBuffer = this._renderBellBuffer()
+    this._unlocked = true
+  },
+
+  _renderBellBuffer() {
+    const ctx = this._audioCtx
+    if (!ctx) return null
+    try {
+      const sr = ctx.sampleRate
+      const dur = 0.6
+      const len = Math.floor(sr * dur)
+      const buf = ctx.createBuffer(1, len, sr)
+      const data = buf.getChannelData(0)
+      for (let i = 0; i < len; i++) {
+        const t = i / sr
+        let freq, amp
+        if (t < 0.3) {
+          freq = 880
+          amp = 0.3 * (1 - t / 0.3)
+        } else {
+          freq = 1320
+          amp = 0.2 * (1 - (t - 0.3) / 0.3)
+        }
+        // 基频 + 泛音，声音更饱满
+        data[i] = (Math.sin(2 * Math.PI * freq * t) + 0.3 * Math.sin(4 * Math.PI * freq * t)) * amp
+      }
+      return buf
+    } catch (e) {
+      console.warn('渲染铃声失败', e)
+      return null
+    }
   },
 
   hasCustom() { return !!this._customData },
@@ -167,14 +200,7 @@ const Ringtone = {
   },
 
   async play() {
-    // Resume AudioContext if suspended (needed for timer finish which isn't user-initiated)
-    const ctx = this.getCtx()
-    let ctxReady = true
-    if (ctx && ctx.state === 'suspended') {
-      try { await ctx.resume(); ctxReady = true } catch { ctxReady = false }
-    }
-
-    // Try custom first
+    // 1) 自定义铃声：用 HTMLAudioElement
     if (this._customData) {
       try {
         const audio = new Audio(this._customData)
@@ -182,70 +208,77 @@ const Ringtone = {
         await audio.play()
         return
       } catch (e) {
-        console.warn('自定义铃声播放失败，用默认', e)
-        // Fall through to default
+        console.warn('自定义铃声播放失败，尝试默认', e)
       }
     }
-    if (ctxReady) this._playDefaultBell()
+
+    // 2) 默认铃声：预渲染 buffer → AudioBufferSourceNode
+    const ctx = this._audioCtx
+    if (ctx && this._bellBuffer) {
+      try {
+        if (ctx.state === 'suspended') await ctx.resume()
+        const src = ctx.createBufferSource()
+        src.buffer = this._bellBuffer
+        src.connect(ctx.destination)
+        src.start()
+        if (navigator.vibrate) navigator.vibrate(200)
+        return
+      } catch (e) {
+        console.warn('默认buffer播放失败，尝试振荡器回退', e)
+      }
+    }
+
+    // 3) 最终回退：振荡器
+    this._playDefaultFallback()
   },
 
-  // Gentle two-tone bell via Web Audio API — no file needed
-  _playDefaultBell() {
+  // 振荡器回退（仅当 buffer 方案不可用时）
+  _playDefaultFallback() {
     const ctx = this.getCtx()
     if (!ctx) return
     try {
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {})
       const now = ctx.currentTime
-
-      // First chime (slightly louder)
       const o1 = ctx.createOscillator()
       const g1 = ctx.createGain()
       o1.connect(g1).connect(ctx.destination)
       o1.type = 'sine'
-      o1.frequency.setValueAtTime(880, now)       // A5
-      o1.frequency.exponentialRampToValueAtTime(740, now + 0.08)  // F#5 — slide down
+      o1.frequency.setValueAtTime(880, now)
+      o1.frequency.exponentialRampToValueAtTime(740, now + 0.08)
       g1.gain.setValueAtTime(0.25, now)
       g1.gain.exponentialRampToValueAtTime(0.001, now + 0.6)
       o1.start(now); o1.stop(now + 0.6)
 
-      // Second chime (softer, 0.35s later)
       const o2 = ctx.createOscillator()
       const g2 = ctx.createGain()
       o2.connect(g2).connect(ctx.destination)
       o2.type = 'sine'
-      o2.frequency.setValueAtTime(1320, now + 0.35)  // E6
+      o2.frequency.setValueAtTime(1320, now + 0.35)
       o2.frequency.exponentialRampToValueAtTime(1100, now + 0.45)
       g2.gain.setValueAtTime(0.15, now + 0.35)
       g2.gain.exponentialRampToValueAtTime(0.001, now + 1.0)
       o2.start(now + 0.35); o2.stop(now + 1.0)
 
-      // Sustain tail (gentle pad decay)
       const o3 = ctx.createOscillator()
       const g3 = ctx.createGain()
       o3.connect(g3).connect(ctx.destination)
       o3.type = 'sine'
-      o3.frequency.setValueAtTime(440, now)        // A4 pedal
+      o3.frequency.setValueAtTime(440, now)
       g3.gain.setValueAtTime(0.06, now)
       g3.gain.exponentialRampToValueAtTime(0.001, now + 1.5)
       o3.start(now); o3.stop(now + 1.5)
 
-      // Vibrate briefly
       if (navigator.vibrate) navigator.vibrate(200)
     } catch (e) {
-      console.warn('默认铃声播放失败', e)
+      console.warn('默认铃声最终回退失败', e)
     }
   },
 
-  // Preview — also resume AudioContext if suspended
   async preview() {
-    // Ensure context is running
-    const ctx = this.getCtx()
-    if (ctx && ctx.state === 'suspended') {
-      try { await ctx.resume() } catch {}
-    }
+    this.unlock()
     await this.play()
   },
 
-  // Handle file selection
   handleFile(file) {
     if (!file) return
     if (file.size > 2 * 1024 * 1024) {
@@ -296,8 +329,8 @@ const Timer = {
     this._interval = setInterval(() => this._tick(), 100)
     this._updateDisplay()
     Bubbles.start()
-    // 提前唤醒音频上下文（点"开始专注"时有用户手势）
-    Ringtone.getCtx()?.resume?.()?.catch?.()
+    // 提前唤醒音频 + 预渲染铃声（点"开始专注"时有用户手势）
+    Ringtone.unlock()
   },
 
   stop() {
